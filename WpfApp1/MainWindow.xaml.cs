@@ -1,4 +1,4 @@
-﻿using Microsoft.VisualStudio.Threading;
+﻿using Microsoft.VisualStudio.Threading; // add ref to //Ref: "%VSRoot%\VSSDK\VisualStudioIntegration\Common\Assemblies\v4.0\Microsoft.VisualStudio.Threading.dll"
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -33,6 +33,8 @@ namespace WpfApp1
 
         public int NTasks { get; set; } = 12;
         public bool TaskDoAwait { get; set; }
+        public bool UiThreadDoAwait { get; set; } = true;
+        public bool UseJTF { get; set; }
         public MainWindow()
         {
             InitializeComponent();
@@ -91,7 +93,9 @@ xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
         <StackPanel Grid.Row=""0"" HorizontalAlignment=""Left"" Height=""30"" VerticalAlignment=""Top"" Orientation=""Horizontal"">
             <Label Content=""#Tasks""/>
             <TextBox Text=""{Binding NTasks}"" Width=""40"" />
-            <CheckBox Content=""TaskDoAwait""  IsChecked=""{Binding TaskDoAwait}""/>
+            <CheckBox Content=""_TaskDoAwait""  IsChecked=""{Binding TaskDoAwait}"" ToolTip=""In the task, use Await, else use Thread.Sleep""/>
+            <CheckBox Content=""_UiThreadDoAwait""  IsChecked=""{Binding UiThreadDoAwait}"" ToolTip=""In the main (UI) thread, use Await, else use Thread.Sleep""/>
+            <CheckBox Content=""Use JTF""  IsChecked=""{Binding UseJTF}"" ToolTip=""Use Joinable Task Factory""/>
             <Button x:Name=""btnGo"" Content=""_Go"" Width=""45"" />
             <Button x:Name=""btnDbgBreak"" Content=""_DebugBreak""/>
 
@@ -108,11 +112,10 @@ xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
             this._btnGo = (Button)grid.FindName("btnGo");
             this._btnGo.Click += BtnGo_Click;
             this._btnDbgBreak = (Button)grid.FindName("btnDbgBreak");
-            this._btnDbgBreak.Click += (o,e) =>
+            this._btnDbgBreak.Click += (o, e) =>
             {
                 Debugger.Break();
             };
-
 
             _txtStatus.MouseDoubleClick += (od, ed) =>
             {
@@ -122,69 +125,51 @@ xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
             };
             await Task.Yield();
         }
+#if false
+Event Name                                                                 	Time MSec	Process Name  	Reason      	AverageThroughput
+Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	3,370.323	WpfApp1 (7260)	Initializing	     0.000       
+Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Sample    	3,370.329	WpfApp1 (7260)	            	                 
+Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Stats     	3,370.332	WpfApp1 (7260)	            	                 
+Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	4,366.461	WpfApp1 (7260)	Starvation  	     0.000       
+Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	5,367.261	WpfApp1 (7260)	Starvation  	     0.000       
+Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	6,366.221	WpfApp1 (7260)	Starvation  	     0.000       
+Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	7,366.493	WpfApp1 (7260)	Starvation  	     0.000       
+Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,366.488	WpfApp1 (7260)	Starvation  	     0.000       
 
+#endif
         private async void BtnGo_Click(object sender, RoutedEventArgs e)
         {
             try
             {
+                _btnGo.IsEnabled = false;
                 _txtStatus.Clear();
-
-                var jtfContext = new JoinableTaskContext();
-                var jtf = new JoinableTaskFactory(jtfContext);
-                jtf.Run(async delegate
+                if (!UseJTF)
                 {
-                    AddStatusMsg($"In Jtf.Run");
-                    await TaskScheduler.Default;
-                    AddStatusMsg($"In Jtf.Run after switch to bkgd");
-                    await Task.Yield();
-                });
-
-                await jtf.RunAsync(async delegate
+                    await DoThreadPoolAsync();
+                }
+                else
                 {
-                    AddStatusMsg($"In Jtf.RunAsync");
-                    await TaskScheduler.Default;
-                    AddStatusMsg($"In Jtf.RunAsync after switch to bkgd");
-                    await Task.Yield();
-                });
-                await jtf.SwitchToMainThreadAsync();
+                    var tcs = new TaskCompletionSource<int>();
+                    var jtfContext = new JoinableTaskContext();
+                    var jtf = new JoinableTaskFactory(jtfContext);
 
-                var tcs = new TaskCompletionSource<int>();
-                var aTasks = new MyTask[NTasks];
-                ShowThreadPoolStats();
-                for (int ii = 0; ii < NTasks; ii++)
-                {
-                    var i = ii;
-                    aTasks[i] = new MyTask($"T{i}", async () =>
+                    jtf.Run(async delegate
                     {
-                        AddStatusMsg($"Task {aTasks[i]} Start");
-                        // in this method we do the Task work that might take a long time (several seconds)
-                        // if the work can be run async, then do so.
-                        // keep in mind how the thread that does the work is used: 
-                        // if it's calling Thread.Sleep, the CPU load will be low, but the threadpool thread will be occupied
+                        AddStatusMsg($"In Jtf.Run");
+                        await TaskScheduler.Default;
+                        AddStatusMsg($"In Jtf.Run after switch to bkgd");
+                        await Task.Yield();
+                    });
 
-
-                        if (TaskDoAwait)
-                        {
-                            await tcs.Task;
-                        }
-                        else
-                        {
-                            while (!tcs.Task.IsCompleted)
-                            {
-//                                await Task.Delay(TimeSpan.FromSeconds(1));
-                                Thread.Sleep(TimeSpan.FromSeconds(3));
-                            }
-                        }
-                        AddStatusMsg($"Task {aTasks[i]} Done");
+                    await jtf.RunAsync(async delegate
+                    {
+                        AddStatusMsg($"In Jtf.RunAsync");
+                        await TaskScheduler.Default;
+                        AddStatusMsg($"In Jtf.RunAsync after switch to bkgd");
+                        await Task.Yield();
                     });
                 }
-                var taskSetDone = Task.Run(async () =>
-                  {
-                      await Task.Delay(TimeSpan.FromSeconds(10));
-                      AddStatusMsg("Setting Task Completion Source");
-                      tcs.TrySetResult(1);
-                  });
-                await Task.WhenAll(aTasks.Select(t => t.GetTask()).Union(new[] { taskSetDone }));
+
                 AddStatusMsg($"Done");
                 ShowThreadPoolStats();
             }
@@ -192,7 +177,61 @@ xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
             {
                 AddStatusMsg(ex.ToString());
             }
+            _btnGo.IsEnabled = true;
+        }
 
+        private async Task DoThreadPoolAsync()
+        {
+            var tcs = new TaskCompletionSource<int>();
+            var aTasks = new MyTask[NTasks];
+            ShowThreadPoolStats();
+            for (int ii = 0; ii < NTasks; ii++)
+            {
+                var i = ii;
+                aTasks[i] = new MyTask($"T{i}", async () =>
+                {
+                    var tid = Thread.CurrentThread.ManagedThreadId;
+                    AddStatusMsg($"Task {aTasks[i]} Start");
+                    // in this method we do the Task work that might take a long time (several seconds)
+                    // if the work can be run async, then do so.
+                    // keep in mind how the thread that does the work is used: 
+                    // if it's calling Thread.Sleep, the CPU load will be low, but the threadpool thread will be occupied
+
+                    if (TaskDoAwait)
+                    {
+                        await tcs.Task;
+                    }
+                    else
+                    {
+                        while (!tcs.Task.IsCompleted)
+                        {
+                            //                                await Task.Delay(TimeSpan.FromSeconds(1));
+                            Thread.Sleep(TimeSpan.FromSeconds(0.5)); // 1 sec is the threadpool starvation threshold
+                        }
+                    }
+                    AddStatusMsg($"Task {aTasks[i]} Done" + (tid == Thread.CurrentThread.ManagedThreadId ? "Same" : "diff") + "Thread");
+                });
+            }
+            var taskSetDone = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10));
+                AddStatusMsg("Setting Task Completion Source");
+                tcs.TrySetResult(1);
+            });
+            if (UiThreadDoAwait)
+            {
+                await Task.WhenAll(aTasks.Select(t => t.GetTask()).Union(new[] { taskSetDone }));
+            }
+            else
+            {
+                while (aTasks.Select(t => t.GetTask()).Union(new[] { taskSetDone }).Any(t => !t.IsCompleted))
+                {
+                    await Task.Yield();
+                    Thread.Sleep(TimeSpan.FromSeconds(1));
+
+                }
+
+            }
         }
 
         private void ShowThreadPoolStats()
