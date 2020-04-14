@@ -6,20 +6,4 @@
         xmlns:local="clr-namespace:WpfApp1"
         mc:Ignorable="d"
         Title="MainWindow" Height="450" Width="1200">
-    <Grid >
-        <Grid.RowDefinitions>
-            <RowDefinition Height="auto"/>
-            <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" HorizontalAlignment="Left" Height="30" VerticalAlignment="Top" Orientation="Horizontal">
-            <Label Content="#Tasks"/>
-            <TextBox Text="{Binding NTasks}" Width="40" />
-            <CheckBox Content="TaskDoAwait"  IsChecked="{Binding TaskDoAwait}"/>
-            <Button x:Name="btnGo" Content="_Go" Width="45" Click="BtnGo_Click"/>
-            <Button x:Name="btnDbgBreak" Content="_DebugBreak"  Click="BtnDbgBreak_Click"/>
-
-        </StackPanel>
-        <TextBox x:Name="_txtStatus" Grid.Row="1" IsReadOnly="True" IsUndoEnabled="False" MaxHeight="400" VerticalAlignment="Top"/>
-
-    </Grid>
 </Window>

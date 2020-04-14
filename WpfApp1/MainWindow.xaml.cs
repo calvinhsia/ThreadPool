@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -12,10 +13,12 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using System.Xml;
 
 namespace WpfApp1
 {
@@ -24,13 +27,16 @@ namespace WpfApp1
     /// </summary>
     public partial class MainWindow : Window
     {
+        private TextBox _txtStatus;
+        private Button _btnGo;
+        private Button _btnDbgBreak;
+
         public int NTasks { get; set; } = 12;
         public bool TaskDoAwait { get; set; }
         public MainWindow()
         {
             InitializeComponent();
             WindowState = WindowState.Maximized;
-            this.DataContext = this;
             this.Loaded += MainWindow_Loaded;
         }
         public void AddStatusMsg(string msg, params object[] args)
@@ -61,8 +67,53 @@ namespace WpfApp1
                     }));
             }
         }
-        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        private async void MainWindow_Loaded(object sender, RoutedEventArgs eLoaded)
         {
+            Title = "ThreadPool Demo";
+            var nameSpace = this.GetType().Namespace;
+            var asm = System.IO.Path.GetFileNameWithoutExtension(
+                Assembly.GetExecutingAssembly().Location);
+
+            var xmlns = string.Format(
+@"xmlns:l=""clr-namespace:{0};assembly={1}""", nameSpace, asm);
+            //there are a lot of quotes (and braces) in XAML
+            //and the C# string requires quotes to be doubled
+            var strxaml =
+@"<Grid
+xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
+xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
+" + xmlns + // add our xaml namespace. Can't use @"" because binding in braces
+@" Margin=""5,5,5,5"">
+        <Grid.RowDefinitions>
+            <RowDefinition Height=""auto""/>
+            <RowDefinition Height=""*""/>
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row=""0"" HorizontalAlignment=""Left"" Height=""30"" VerticalAlignment=""Top"" Orientation=""Horizontal"">
+            <Label Content=""#Tasks""/>
+            <TextBox Text=""{Binding NTasks}"" Width=""40"" />
+            <CheckBox Content=""TaskDoAwait""  IsChecked=""{Binding TaskDoAwait}""/>
+            <Button x:Name=""btnGo"" Content=""_Go"" Width=""45"" />
+            <Button x:Name=""btnDbgBreak"" Content=""_DebugBreak""/>
+
+        </StackPanel>
+        <TextBox x:Name=""_txtStatus"" Grid.Row=""1"" IsReadOnly=""True"" IsUndoEnabled=""False"" MaxHeight=""400"" VerticalAlignment=""Top""/>
+    </Grid>
+";
+            var strReader = new System.IO.StringReader(strxaml);
+            var xamlreader = XmlReader.Create(strReader);
+            var grid = (Grid)(XamlReader.Load(xamlreader));
+            grid.DataContext = this;
+            this.Content = grid;
+            this._txtStatus = (TextBox)grid.FindName("_txtStatus");
+            this._btnGo = (Button)grid.FindName("btnGo");
+            this._btnGo.Click += BtnGo_Click;
+            this._btnDbgBreak = (Button)grid.FindName("btnDbgBreak");
+            this._btnDbgBreak.Click += (o,e) =>
+            {
+                Debugger.Break();
+            };
+
+
             _txtStatus.MouseDoubleClick += (od, ed) =>
             {
                 var fname = System.IO.Path.ChangeExtension(System.IO.Path.GetTempFileName(), ".txt");
@@ -150,11 +201,6 @@ namespace WpfApp1
             AddStatusMsg($" #workerThreads={workerThreads} #completionPortThreads={completionPortThreads}");
             ThreadPool.GetMinThreads(out var minWorkerThreads, out var minCompletionPortThreads);   // 8, 8
             AddStatusMsg($"    Min  #workerThreads={minWorkerThreads} #completionPortThreads={minCompletionPortThreads}");
-        }
-
-        private void BtnDbgBreak_Click(object sender, RoutedEventArgs e)
-        {
-            System.Diagnostics.Debugger.Break();
         }
     }
     class MyTask
