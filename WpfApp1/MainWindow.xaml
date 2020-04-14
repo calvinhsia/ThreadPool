@@ -20,7 +20,7 @@
             <TextBlock Text="textblock1 text    "/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" Grid.Column="1" HorizontalAlignment="Right">
-            <TextBlock Text="TEXTBLOCK2 text    "/>
+            <TextBox Text="TEXTBLOCK2 text    " VerticalScrollBarVisibility="Auto"/>
         </StackPanel>
     </Grid>
 </Window>

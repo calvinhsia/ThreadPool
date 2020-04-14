@@ -99,15 +99,17 @@ xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
             <TextBox Text=""{Binding NTasks}"" Width=""40"" />
             <CheckBox Margin=""15,0,0,10"" Content=""_TaskDoAwait""  IsChecked=""{Binding TaskDoAwait}"" ToolTip=""In the task, use Await, else use Thread.Sleep""/>
             <CheckBox Margin=""15,0,0,10"" Content=""_UiThreadDoAwait""  IsChecked=""{Binding UiThreadDoAwait}"" ToolTip=""In the main (UI) thread, use Await, else use Thread.Sleep (and the UI is not responsive!!)""/>
-            <CheckBox Margin=""15,0,0,10"" Content=""Use JTF""  IsChecked=""{Binding UseJTF}"" ToolTip=""Use Joinable Task Factory""/>
+            <CheckBox Margin=""15,0,0,10"" Content=""Use _JTF""  IsChecked=""{Binding UseJTF}"" ToolTip=""Use Joinable Task Factory""/>
             <Button x:Name=""_btnGo"" Content=""_Go"" Width=""45"" />
             <Button x:Name=""_btnDbgBreak"" Content=""_DebugBreak""/>
         </StackPanel>
         <StackPanel Orientation=""Horizontal"" Grid.Column=""1"" HorizontalAlignment=""Right"">
-            <TextBox x:Name=""_txtUI"" Grid.Column=""1"" Text=""sample text"" IsReadOnly=""True"" IsUndoEnabled=""False"" MaxHeight=""400"" HorizontalAlignment=""Right""/>
+            <TextBox x:Name=""_txtUI"" Grid.Column=""1"" Text=""sample text"" Width=""200"" IsReadOnly=""True"" IsUndoEnabled=""False"" HorizontalAlignment=""Right""/>
         </StackPanel>
         
-        <TextBox x:Name=""_txtStatus"" Grid.Row=""1"" IsReadOnly=""True"" IsUndoEnabled=""False"" MaxHeight=""400"" VerticalAlignment=""Top""/>
+        <TextBox x:Name=""_txtStatus"" Grid.Row=""1"" FontFamily=""Consolas"" FontSize=""10""
+
+        IsReadOnly=""True"" VerticalScrollBarVisibility=""Auto"" IsUndoEnabled=""False"" VerticalAlignment=""Top""/>
     </Grid>
 ";
             var strReader = new System.IO.StringReader(strxaml);
@@ -163,25 +165,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                 }
                 else
                 {
-                    var tcs = new TaskCompletionSource<int>();
-                    var jtfContext = new JoinableTaskContext();
-                    var jtf = new JoinableTaskFactory(jtfContext);
-
-                    jtf.Run(async delegate
-                    {
-                        AddStatusMsg($"In Jtf.Run");
-                        await TaskScheduler.Default;
-                        AddStatusMsg($"In Jtf.Run after switch to bkgd");
-                        await Task.Yield();
-                    });
-
-                    await jtf.RunAsync(async delegate
-                    {
-                        AddStatusMsg($"In Jtf.RunAsync");
-                        await TaskScheduler.Default;
-                        AddStatusMsg($"In Jtf.RunAsync after switch to bkgd");
-                        await Task.Yield();
-                    });
+                    await DoJTFAsync();
                 }
 
                 AddStatusMsg($"Done");
@@ -194,6 +178,67 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             _btnGo.IsEnabled = true;
         }
 
+        private async Task DoJTFAsync()
+        {
+            var tcs = new TaskCompletionSource<int>();
+            var jtfContext = new JoinableTaskContext();
+            var jtf = new JoinableTaskFactory(jtfContext);
+            _txtUI.Text = "0"; // must be done on UI thread
+
+            jtf.Run(async delegate
+            {
+                AddStatusMsg($"In Jtf.Run");
+                await TaskScheduler.Default;
+                AddStatusMsg($"In Jtf.Run after switch to bkgd");
+                await Task.Yield();
+            });
+
+            await jtf.RunAsync(async delegate
+            {
+                AddStatusMsg($"In Jtf.RunAsync");
+                await TaskScheduler.Default;
+                AddStatusMsg($"In Jtf.RunAsync after switch to bkgd");
+                await Task.Yield();
+            });
+            var lstTasks = new List<JoinableTask>();
+            for (int ii = 0; ii < NTasks; ii++)
+            {
+                var i = ii;// local copy of iteration var
+                lstTasks.Add(jtf.RunAsync(async () =>
+               {
+                   AddStatusMsg($"In Task jtf.runasync {i}");
+                   await TaskScheduler.Default;
+                   AddStatusMsg($"In Task jtf.runasync {i} bgd");
+                   await jtf.SwitchToMainThreadAsync();
+                   var val = int.Parse(_txtUI.Text);
+                   _txtUI.Text = (val + 1).ToString();
+                   AddStatusMsg($"In Task jtf.runasync {i} set txt");
+               }));
+
+            }
+            lstTasks.Add(jtf.RunAsync(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10));
+                AddStatusMsg("Setting Task Completion Source");
+                tcs.TrySetResult(1);
+            }));
+            if (UiThreadDoAwait)
+            {
+                var pending = 1;
+                while (pending > 0)
+                {
+                    pending = lstTasks.Where(j => !j.Task.IsCompleted).Count();
+                    await Task.Delay(TimeSpan.FromSeconds(1));
+                    await Task.Yield();
+                }
+
+            }
+            else
+            {
+
+            }
+        }
+
         private async Task DoThreadPoolAsync()
         {
             var tcs = new TaskCompletionSource<int>();
@@ -202,7 +247,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             ShowThreadPoolStats();
             for (int ii = 0; ii < NTasks; ii++)
             {
-                var i = ii;
+                var i = ii;// local copy of iteration var
                 lstTasks.Add(Task.Run(async () =>
                 {
                     var tid = Thread.CurrentThread.ManagedThreadId;
@@ -241,7 +286,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             {  // keeps the UI thread really busy
                 while (lstTasks.Union(new[] { taskSetDone }).Any(t => !t.IsCompleted))
                 {
-//                    await Task.Yield();
+                    //                    await Task.Yield();
                     Thread.Sleep(TimeSpan.FromSeconds(1));// Sleep surrenders the CPU, but the thread is still in use.
                 }
             }
