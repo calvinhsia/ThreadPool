@@ -32,7 +32,7 @@ namespace WpfApp1
         private Button _btnDbgBreak;
 
         public int NTasks { get; set; } = 12;
-        public bool TaskDoAwait { get; set; }
+        public bool TaskDoAwait { get; set; } = true;
         public bool UiThreadDoAwait { get; set; } = true;
         public bool UseJTF { get; set; }
         public MainWindow()
@@ -72,12 +72,10 @@ namespace WpfApp1
         private async void MainWindow_Loaded(object sender, RoutedEventArgs eLoaded)
         {
             Title = "ThreadPool Demo";
-            var nameSpace = this.GetType().Namespace;
-            var asm = System.IO.Path.GetFileNameWithoutExtension(
-                Assembly.GetExecutingAssembly().Location);
 
-            var xmlns = string.Format(
-@"xmlns:l=""clr-namespace:{0};assembly={1}""", nameSpace, asm);
+            // xmlns:l="clr-namespace:WpfApp1;assembly=WpfApp1"
+            var xmlns = $@"xmlns:l=""clr-namespace:{this.GetType().Namespace};assembly={
+                System.IO.Path.GetFileNameWithoutExtension(Assembly.GetExecutingAssembly().Location)}""";
             //there are a lot of quotes (and braces) in XAML
             //and the C# string requires quotes to be doubled
             var strxaml =
@@ -126,6 +124,12 @@ xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
             await Task.Yield();
         }
 #if false
+if you see tasks starting 1 second apart: 
+    ThreadPool Tasks are queued...
+    The scheduler waits up to 1 second for an available thread.
+        If available, the task is run on that thread
+        else Starvation: another threadpool thread is created.
+PerfView trace, Events View, ThreadPoolWorkerThreadAdjustment Events:
 Event Name                                                                 	Time MSec	Process Name  	Reason      	AverageThroughput
 Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	3,370.323	WpfApp1 (7260)	Initializing	     0.000       
 Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Sample    	3,370.329	WpfApp1 (7260)	            	                 
@@ -183,15 +187,16 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
         private async Task DoThreadPoolAsync()
         {
             var tcs = new TaskCompletionSource<int>();
-            var aTasks = new MyTask[NTasks];
+            var lstTasks = new List<Task>();
+
             ShowThreadPoolStats();
             for (int ii = 0; ii < NTasks; ii++)
             {
                 var i = ii;
-                aTasks[i] = new MyTask($"T{i}", async () =>
+                lstTasks.Add(Task.Run(async () =>
                 {
                     var tid = Thread.CurrentThread.ManagedThreadId;
-                    AddStatusMsg($"Task {aTasks[i]} Start");
+                    AddStatusMsg($"Task {i} Start");
                     // in this method we do the Task work that might take a long time (several seconds)
                     // if the work can be run async, then do so.
                     // keep in mind how the thread that does the work is used: 
@@ -209,8 +214,8 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                             Thread.Sleep(TimeSpan.FromSeconds(0.5)); // 1 sec is the threadpool starvation threshold
                         }
                     }
-                    AddStatusMsg($"Task {aTasks[i]} Done" + (tid == Thread.CurrentThread.ManagedThreadId ? "Same" : "diff") + "Thread");
-                });
+                    AddStatusMsg($"Task {i} Done on " + (tid == Thread.CurrentThread.ManagedThreadId ? "Same" : "diff") + " Thread");
+                }));
             }
             var taskSetDone = Task.Run(async () =>
             {
@@ -220,17 +225,15 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             });
             if (UiThreadDoAwait)
             {
-                await Task.WhenAll(aTasks.Select(t => t.GetTask()).Union(new[] { taskSetDone }));
+                await Task.WhenAll(lstTasks.Union(new[] { taskSetDone }));
             }
             else
             {
-                while (aTasks.Select(t => t.GetTask()).Union(new[] { taskSetDone }).Any(t => !t.IsCompleted))
+                while (lstTasks.Union(new[] { taskSetDone }).Any(t => !t.IsCompleted))
                 {
                     await Task.Yield();
                     Thread.Sleep(TimeSpan.FromSeconds(1));
-
                 }
-
             }
         }
 
@@ -240,25 +243,6 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             AddStatusMsg($" #workerThreads={workerThreads} #completionPortThreads={completionPortThreads}");
             ThreadPool.GetMinThreads(out var minWorkerThreads, out var minCompletionPortThreads);   // 8, 8
             AddStatusMsg($"    Min  #workerThreads={minWorkerThreads} #completionPortThreads={minCompletionPortThreads}");
-        }
-    }
-    class MyTask
-    {
-        private readonly string _desc;
-        public readonly Action _act;
-
-        public MyTask(string desc, Action act)
-        {
-            _desc = desc;
-            _act = act;
-        }
-        public Task GetTask()
-        {
-            return Task.Run(_act);
-        }
-        public override string ToString()
-        {
-            return $"{_desc}";
         }
     }
 }
