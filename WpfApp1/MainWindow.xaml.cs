@@ -30,6 +30,7 @@ namespace WpfApp1
         private TextBox _txtStatus;
         private Button _btnGo;
         private Button _btnDbgBreak;
+        private TextBox _txtUI;
 
         public int NTasks { get; set; } = 12;
         public bool TaskDoAwait { get; set; } = true;
@@ -88,16 +89,24 @@ xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
             <RowDefinition Height=""auto""/>
             <RowDefinition Height=""*""/>
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width = ""auto""/>
+            <ColumnDefinition Width = ""*""/>
+        </Grid.ColumnDefinitions>
+
         <StackPanel Grid.Row=""0"" HorizontalAlignment=""Left"" Height=""30"" VerticalAlignment=""Top"" Orientation=""Horizontal"">
             <Label Content=""#Tasks""/>
             <TextBox Text=""{Binding NTasks}"" Width=""40"" />
-            <CheckBox Content=""_TaskDoAwait""  IsChecked=""{Binding TaskDoAwait}"" ToolTip=""In the task, use Await, else use Thread.Sleep""/>
-            <CheckBox Content=""_UiThreadDoAwait""  IsChecked=""{Binding UiThreadDoAwait}"" ToolTip=""In the main (UI) thread, use Await, else use Thread.Sleep""/>
-            <CheckBox Content=""Use JTF""  IsChecked=""{Binding UseJTF}"" ToolTip=""Use Joinable Task Factory""/>
-            <Button x:Name=""btnGo"" Content=""_Go"" Width=""45"" />
-            <Button x:Name=""btnDbgBreak"" Content=""_DebugBreak""/>
-
+            <CheckBox Margin=""15,0,0,10"" Content=""_TaskDoAwait""  IsChecked=""{Binding TaskDoAwait}"" ToolTip=""In the task, use Await, else use Thread.Sleep""/>
+            <CheckBox Margin=""15,0,0,10"" Content=""_UiThreadDoAwait""  IsChecked=""{Binding UiThreadDoAwait}"" ToolTip=""In the main (UI) thread, use Await, else use Thread.Sleep (and the UI is not responsive!!)""/>
+            <CheckBox Margin=""15,0,0,10"" Content=""Use JTF""  IsChecked=""{Binding UseJTF}"" ToolTip=""Use Joinable Task Factory""/>
+            <Button x:Name=""_btnGo"" Content=""_Go"" Width=""45"" />
+            <Button x:Name=""_btnDbgBreak"" Content=""_DebugBreak""/>
         </StackPanel>
+        <StackPanel Orientation=""Horizontal"" Grid.Column=""1"" HorizontalAlignment=""Right"">
+            <TextBox x:Name=""_txtUI"" Grid.Column=""1"" Text=""sample text"" IsReadOnly=""True"" IsUndoEnabled=""False"" MaxHeight=""400"" HorizontalAlignment=""Right""/>
+        </StackPanel>
+        
         <TextBox x:Name=""_txtStatus"" Grid.Row=""1"" IsReadOnly=""True"" IsUndoEnabled=""False"" MaxHeight=""400"" VerticalAlignment=""Top""/>
     </Grid>
 ";
@@ -107,9 +116,10 @@ xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
             grid.DataContext = this;
             this.Content = grid;
             this._txtStatus = (TextBox)grid.FindName("_txtStatus");
-            this._btnGo = (Button)grid.FindName("btnGo");
+            this._btnGo = (Button)grid.FindName("_btnGo");
             this._btnGo.Click += BtnGo_Click;
-            this._btnDbgBreak = (Button)grid.FindName("btnDbgBreak");
+            this._btnDbgBreak = (Button)grid.FindName("_btnDbgBreak");
+            this._txtUI = (TextBox)grid.FindName("_txtUI");
             this._btnDbgBreak.Click += (o, e) =>
             {
                 Debugger.Break();
@@ -228,11 +238,11 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                 await Task.WhenAll(lstTasks.Union(new[] { taskSetDone }));
             }
             else
-            {
+            {  // keeps the UI thread really busy
                 while (lstTasks.Union(new[] { taskSetDone }).Any(t => !t.IsCompleted))
                 {
-                    await Task.Yield();
-                    Thread.Sleep(TimeSpan.FromSeconds(1));
+//                    await Task.Yield();
+                    Thread.Sleep(TimeSpan.FromSeconds(1));// Sleep surrenders the CPU, but the thread is still in use.
                 }
             }
         }
