@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.VisualStudio.Threading;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -76,6 +77,26 @@ namespace WpfApp1
             try
             {
                 _txtStatus.Clear();
+
+                var jtfContext = new JoinableTaskContext();
+                var jtf = new JoinableTaskFactory(jtfContext);
+                jtf.Run(async delegate
+                {
+                    AddStatusMsg($"In Jtf.Run");
+                    await TaskScheduler.Default;
+                    AddStatusMsg($"In Jtf.Run after switch to bkgd");
+                    await Task.Yield();
+                });
+
+                await jtf.RunAsync(async delegate
+                {
+                    AddStatusMsg($"In Jtf.RunAsync");
+                    await TaskScheduler.Default;
+                    AddStatusMsg($"In Jtf.RunAsync after switch to bkgd");
+                    await Task.Yield();
+                });
+                await jtf.SwitchToMainThreadAsync();
+
                 var tcs = new TaskCompletionSource<int>();
                 var aTasks = new MyTask[NTasks];
                 ShowThreadPoolStats();
@@ -134,7 +155,6 @@ namespace WpfApp1
         private void BtnDbgBreak_Click(object sender, RoutedEventArgs e)
         {
             System.Diagnostics.Debugger.Break();
-
         }
     }
     class MyTask
