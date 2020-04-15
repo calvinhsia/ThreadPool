@@ -208,7 +208,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                         while (!tcs.Task.IsCompleted)
                         {
                             //                                await Task.Delay(TimeSpan.FromSeconds(1));
-                            Thread.Sleep(TimeSpan.FromSeconds(0.5)); // 1 sec is the threadpool starvation threshold
+                            Thread.Sleep(TimeSpan.FromSeconds(0.2)); // 1 sec is the threadpool starvation threshold
                         }
                     }
                     AddStatusMsg($"Task {i} Done on " + (tid == Thread.CurrentThread.ManagedThreadId ? "Same" : "diff") + " Thread");
@@ -216,9 +216,11 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             }
             var taskSetDone = Task.Run(async () =>
             {
+                AddStatusMsg("Starting TaskCompletionSource Task");
                 await Task.Delay(TimeSpan.FromSeconds(10));
                 AddStatusMsg("Setting Task Completion Source");
                 tcs.TrySetResult(1);
+                AddStatusMsg("Set  Task Completion Source");
             });
             if (UiThreadDoAwait)
             {
@@ -296,6 +298,12 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                    {
                        AddStatusMsg($"In Task jtf.runasync {i}");
                        await TaskScheduler.Default;
+
+                       jtf.Run(async () =>
+                       {
+                           Thread.Sleep(TimeSpan.FromSeconds(1));
+                           await Task.Yield();
+                       });
                        AddStatusMsg($"In Task jtf.runasync {i} bgd");
                        await jtf.SwitchToMainThreadAsync();
                        UpdateUiTxt();
@@ -356,21 +364,23 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             this._mainWindow = mainWindow;
             this._tcsWatcherThread = new TaskCompletionSource<int>();
             this._ctsWatcherThread = new CancellationTokenSource();
+            // to detect a threadpool starvation, we need a non-threadpool thread
             this._threadWatcher = new Thread(async () =>
             {
                 var sw = new Stopwatch();
                 mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)}");
                 while (!_ctsWatcherThread.IsCancellationRequested)
                 {
+                    // continuously monitor how long it takes to execute a vary fast WorkItem in threadpool
                     sw.Restart();
                     var tcs = new TaskCompletionSource<int>(0);
                     ThreadPool.QueueUserWorkItem((o) =>
                     {
                         tcs.SetResult(0);
                     });
-                    await tcs.Task;
+                    await tcs.Task; // wait for the workitem to be completed
                     sw.Stop();
-                    if (sw.Elapsed > TimeSpan.FromSeconds(0.5))
+                    if (sw.Elapsed > TimeSpan.FromSeconds(0.5)) //detect if it took > thresh to execute task
                     {
                         mainWindow.AddStatusMsg($"Detected ThreadPool Starvation  {sw.Elapsed.TotalSeconds:n2} secs");
                     }
@@ -385,11 +395,11 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
 
         public void Dispose()
         {
-            _mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)} Dispose");
+//            _mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)} Dispose");
             this._ctsWatcherThread.Cancel();
             while (!_tcsWatcherThread.Task.IsCompleted)
             {
-                Task.Delay(TimeSpan.FromSeconds(1));
+                Task.Delay(TimeSpan.FromSeconds(0.2));
             }
             _mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)} Disposed");
         }
