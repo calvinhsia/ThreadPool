@@ -1,4 +1,6 @@
-﻿// see https://github.com/microsoft/vs-threading/blob/master/doc/cookbook_vs.md
+﻿//Sample to demonstrate ThreadPool Starvation, with and without using JTF
+// File->New->Project->C# WPF App. (Change "WpfApp1" namespace below to match whatever you create)
+// see https://github.com/microsoft/vs-threading/blob/master/doc/cookbook_vs.md
 // https://docs.microsoft.com/en-us/archive/blogs/vancem/diagnosing-net-core-threadpool-starvation-with-perfview-why-my-service-is-not-saturating-all-cores-or-seems-to-stall
 //  https://github.com/microsoft/vs-threading/blob/master/doc/threadpool_starvation.md
 // https://github.com/calvinhsia/ThreadPool
@@ -9,20 +11,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Markup;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 using System.Xml;
 
 namespace WpfApp1
@@ -357,9 +350,10 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                     });
                     tcs.Task.Wait(); // wait for the workitem to be completed. Can't use async here
                     sw.Stop();
-                    if (sw.Elapsed > TimeSpan.FromSeconds(0.5)) //detect if it took > thresh to execute task
+                    if (sw.Elapsed > TimeSpan.FromSeconds(0.25)) //detect if it took > thresh to execute task
                     {
                         mainWindow.AddStatusMsg($"Detected ThreadPool Starvation !!!!!!!! {sw.Elapsed.TotalSeconds:n2} secs");
+                        Thread.Sleep(TimeSpan.FromSeconds(1)); // don't try to detect starvation for another second
                     }
                 }
                 _tcsWatcherThread.TrySetResult(0);
