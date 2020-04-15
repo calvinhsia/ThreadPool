@@ -1,4 +1,7 @@
-﻿using Microsoft.VisualStudio.Threading; // add ref to //Ref: "%VSRoot%\VSSDK\VisualStudioIntegration\Common\Assemblies\v4.0\Microsoft.VisualStudio.Threading.dll"
+﻿// see https://github.com/microsoft/vs-threading/blob/master/doc/cookbook_vs.md
+//  https://github.com/microsoft/vs-threading/blob/master/doc/threadpool_starvation.md
+
+using Microsoft.VisualStudio.Threading; // add ref to //Ref: "%VSRoot%\VSSDK\VisualStudioIntegration\Common\Assemblies\v4.0\Microsoft.VisualStudio.Threading.dll"
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -30,9 +33,9 @@ namespace WpfApp1
         private TextBox _txtStatus;
         private Button _btnGo;
         private Button _btnDbgBreak;
-        private TextBox _txtUI;
+        private TextBox _txtUI; // not databound so must be updated from main thread
 
-        public int NTasks { get; set; } = 12;
+        public int NTasks { get; set; } = 10;
         public bool TaskDoAwait { get; set; } = true;
         public bool UiThreadDoAwait { get; set; } = true;
         public bool UseJTF { get; set; }
@@ -48,7 +51,7 @@ namespace WpfApp1
             {
                 // we want to read the threadid 
                 //and time immediately on current thread
-                var dt = string.Format("[{0}],{1,2},",
+                var dt = string.Format("[{0}],TID={1,2},",
                     DateTime.Now.ToString("hh:mm:ss:fff"),
                     Thread.CurrentThread.ManagedThreadId);
                 _txtStatus.Dispatcher.BeginInvoke(
@@ -75,16 +78,14 @@ namespace WpfApp1
             Title = "ThreadPool Demo";
 
             // xmlns:l="clr-namespace:WpfApp1;assembly=WpfApp1"
-            var xmlns = $@"xmlns:l=""clr-namespace:{this.GetType().Namespace};assembly={
-                System.IO.Path.GetFileNameWithoutExtension(Assembly.GetExecutingAssembly().Location)}""";
-            //there are a lot of quotes (and braces) in XAML
-            //and the C# string requires quotes to be doubled
+            // the C# string requires quotes to be doubled
             var strxaml =
-@"<Grid
+$@"<Grid
 xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
 xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
-" + xmlns + // add our xaml namespace. Can't use @"" because binding in braces
-@" Margin=""5,5,5,5"">
+xmlns:l=""clr-namespace:{this.GetType().Namespace};assembly={
+                System.IO.Path.GetFileNameWithoutExtension(Assembly.GetExecutingAssembly().Location)}"" 
+        Margin=""5,5,5,5"">
         <Grid.RowDefinitions>
             <RowDefinition Height=""auto""/>
             <RowDefinition Height=""*""/>
@@ -96,10 +97,10 @@ xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
 
         <StackPanel Grid.Row=""0"" HorizontalAlignment=""Left"" Height=""30"" VerticalAlignment=""Top"" Orientation=""Horizontal"">
             <Label Content=""#Tasks""/>
-            <TextBox Text=""{Binding NTasks}"" Width=""40"" />
-            <CheckBox Margin=""15,0,0,10"" Content=""_TaskDoAwait""  IsChecked=""{Binding TaskDoAwait}"" ToolTip=""In the task, use Await, else use Thread.Sleep""/>
-            <CheckBox Margin=""15,0,0,10"" Content=""_UiThreadDoAwait""  IsChecked=""{Binding UiThreadDoAwait}"" ToolTip=""In the main (UI) thread, use Await, else use Thread.Sleep (and the UI is not responsive!!)""/>
-            <CheckBox Margin=""15,0,0,10"" Content=""Use _JTF""  IsChecked=""{Binding UseJTF}"" ToolTip=""Use Joinable Task Factory""/>
+            <TextBox Text=""{{Binding NTasks}}"" Width=""40"" />
+            <CheckBox Margin=""15,0,0,10"" Content=""_TaskDoAwait""  IsChecked=""{{Binding TaskDoAwait}}"" ToolTip=""In the task, use Await, else use Thread.Sleep""/>
+            <CheckBox Margin=""15,0,0,10"" Content=""_UiThreadDoAwait""  IsChecked=""{{Binding UiThreadDoAwait}}"" ToolTip=""In the main (UI) thread, use Await, else use Thread.Sleep (and the UI is not responsive!!)""/>
+            <CheckBox Margin=""15,0,0,10"" Content=""Use _JTF""  IsChecked=""{{Binding UseJTF}}"" ToolTip=""Use Joinable Task Factory""/>
             <Button x:Name=""_btnGo"" Content=""_Go"" Width=""45"" />
             <Button x:Name=""_btnDbgBreak"" Content=""_DebugBreak""/>
         </StackPanel>
@@ -157,86 +158,27 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
         {
             try
             {
-                _btnGo.IsEnabled = false;
-                _txtStatus.Clear();
-                if (!UseJTF)
+                using (var oWatcher = new MyThreadPoolWatcher(this))
                 {
-                    await DoThreadPoolAsync();
+                    _btnGo.IsEnabled = false;
+                    _txtStatus.Clear();
+                    if (!UseJTF)
+                    {
+                        await DoThreadPoolAsync();
+                    }
+                    else
+                    {
+                        await DoJTFAsync();
+                    }
+                    AddStatusMsg($"Done");
+                    ShowThreadPoolStats();
                 }
-                else
-                {
-                    await DoJTFAsync();
-                }
-
-                AddStatusMsg($"Done");
-                ShowThreadPoolStats();
             }
             catch (Exception ex)
             {
                 AddStatusMsg(ex.ToString());
             }
             _btnGo.IsEnabled = true;
-        }
-
-        private async Task DoJTFAsync()
-        {
-            var tcs = new TaskCompletionSource<int>();
-            var jtfContext = new JoinableTaskContext();
-            var jtf = new JoinableTaskFactory(jtfContext);
-            _txtUI.Text = "0"; // must be done on UI thread
-
-            jtf.Run(async delegate
-            {
-                AddStatusMsg($"In Jtf.Run");
-                await TaskScheduler.Default;
-                AddStatusMsg($"In Jtf.Run after switch to bkgd");
-                await Task.Yield();
-            });
-
-            await jtf.RunAsync(async delegate
-            {
-                AddStatusMsg($"In Jtf.RunAsync");
-                await TaskScheduler.Default;
-                AddStatusMsg($"In Jtf.RunAsync after switch to bkgd");
-                await Task.Yield();
-            });
-            var lstTasks = new List<JoinableTask>();
-            for (int ii = 0; ii < NTasks; ii++)
-            {
-                var i = ii;// local copy of iteration var
-                lstTasks.Add(jtf.RunAsync(async () =>
-               {
-                   AddStatusMsg($"In Task jtf.runasync {i}");
-                   await TaskScheduler.Default;
-                   AddStatusMsg($"In Task jtf.runasync {i} bgd");
-                   await jtf.SwitchToMainThreadAsync();
-                   var val = int.Parse(_txtUI.Text);
-                   _txtUI.Text = (val + 1).ToString();
-                   AddStatusMsg($"In Task jtf.runasync {i} set txt");
-               }));
-
-            }
-            lstTasks.Add(jtf.RunAsync(async () =>
-            {
-                await Task.Delay(TimeSpan.FromSeconds(10));
-                AddStatusMsg("Setting Task Completion Source");
-                tcs.TrySetResult(1);
-            }));
-            if (UiThreadDoAwait)
-            {
-                var pending = 1;
-                while (pending > 0)
-                {
-                    pending = lstTasks.Where(j => !j.Task.IsCompleted).Count();
-                    await Task.Delay(TimeSpan.FromSeconds(1));
-                    await Task.Yield();
-                }
-
-            }
-            else
-            {
-
-            }
         }
 
         private async Task DoThreadPoolAsync()
@@ -292,12 +234,164 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             }
         }
 
+        //async Task UpdateCounterFromAnyThread(JoinableTaskFactory jtf, int secsDelay)
+        //{
+        //    await jtf.SwitchToMainThreadAsync();
+        //    Thread.Sleep(TimeSpan.FromSeconds(2));
+        //    UpdateUiTxt();
+        //}
+
+        //private async Task DoJTFTestAsync(JoinableTaskFactory jtf)
+        //{
+        //    AddStatusMsg($"In {nameof(DoJTFTestAsync)}");
+        //    await TaskScheduler.Default;
+        //    jtf.Run(async () =>
+        //       {
+        //           await jtf.SwitchToMainThreadAsync();
+        //           UpdateUiTxt();
+        //           Thread.Sleep(TimeSpan.FromSeconds(1));
+
+        //       });
+
+        //}
+
+        private async Task DoJTFAsync()
+        {
+            var tcs = new TaskCompletionSource<int>();
+            var jtfContext = new JoinableTaskContext();
+
+            var jtf = jtfContext.CreateFactory(jtfContext.CreateCollection());
+            _txtUI.Text = "0"; // must be done on UI thread
+
+            //            await DoJTFAsync();
+
+            jtf.Run(async delegate
+            {
+                AddStatusMsg($"In Jtf.Run");
+                await TaskScheduler.Default;
+                AddStatusMsg($"In Jtf.Run after switch to bkgd");
+                await Task.Yield();
+            });
+
+            await jtf.RunAsync(async delegate
+            {
+                AddStatusMsg($"In Jtf.RunAsync");
+                await TaskScheduler.Default;
+                AddStatusMsg($"In Jtf.RunAsync after switch to bkgd");
+                await Task.Yield();
+            });
+
+            var lstTasks = new List<JoinableTask>();
+            for (int ii = 0; ii < NTasks; ii++)
+            {
+                var i = ii;// local copy of iteration var
+                //await TaskScheduler.Default; // switch to threadpool thread
+                //var x = jtf.Run(async () =>
+                //{
+                //    return 1;
+                //});
+
+
+                lstTasks.Add(jtf.RunAsync(async () =>
+                   {
+                       AddStatusMsg($"In Task jtf.runasync {i}");
+                       await TaskScheduler.Default;
+                       AddStatusMsg($"In Task jtf.runasync {i} bgd");
+                       await jtf.SwitchToMainThreadAsync();
+                       UpdateUiTxt();
+                       AddStatusMsg($"In Task jtf.runasync {i} set txt");
+                   }));
+
+            }
+            lstTasks.Add(jtf.RunAsync(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10));
+                AddStatusMsg("Setting Task Completion Source");
+                tcs.TrySetResult(1);
+            }));
+            if (UiThreadDoAwait)
+            {
+                await Task.WhenAll(lstTasks.Select(j => j.Task));
+            }
+            else
+            {
+                while (lstTasks.Where(j => !j.Task.IsCompleted).Count() > 0)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1)); // need this await so ui thread can be used by other tasks. Else deadlock
+                    await Task.Yield();
+                }
+            }
+        }
+
+        private void UpdateUiTxt()
+        {
+            // will throw if not on UI thread
+            var val = int.Parse(_txtUI.Text);
+            _txtUI.Text = (val + 1).ToString();
+            Thread.Sleep(TimeSpan.FromSeconds(1));
+        }
+
+
         private void ShowThreadPoolStats()
         {
             ThreadPool.GetMaxThreads(out var workerThreads, out var completionPortThreads);  /// 2047, 1000
-            AddStatusMsg($" #workerThreads={workerThreads} #completionPortThreads={completionPortThreads}");
+            AddStatusMsg($"  Max    #workerThreads={workerThreads} #completionPortThreads={completionPortThreads}");
             ThreadPool.GetMinThreads(out var minWorkerThreads, out var minCompletionPortThreads);   // 8, 8
-            AddStatusMsg($"    Min  #workerThreads={minWorkerThreads} #completionPortThreads={minCompletionPortThreads}");
+            AddStatusMsg($"  Min    #workerThreads={minWorkerThreads} #completionPortThreads={minCompletionPortThreads}");
+            ThreadPool.GetAvailableThreads(out var availWorkerThreads, out var availCompletionPortThreads);
+            AddStatusMsg($"  Avail  #workerThreads={availWorkerThreads} #completionPortThreads={availCompletionPortThreads}");
+        }
+    }
+
+    // https://devdiv.visualstudio.com/DevDiv/_git/VS?path=%2Fsrc%2Fenv%2Fshell%2FUIInternal%2FPackages%2FDiagnostics%2FThreadPoolWatcher.cs&_a=contents&version=GBmaster
+    internal class MyThreadPoolWatcher : IDisposable
+    {
+        private readonly MainWindow _mainWindow;
+        private readonly TaskCompletionSource<int> _tcsWatcherThread;
+        private readonly CancellationTokenSource _ctsWatcherThread;
+        private readonly Thread _threadWatcher;
+
+        public MyThreadPoolWatcher(MainWindow mainWindow)
+        {
+            this._mainWindow = mainWindow;
+            this._tcsWatcherThread = new TaskCompletionSource<int>();
+            this._ctsWatcherThread = new CancellationTokenSource();
+            this._threadWatcher = new Thread(async () =>
+            {
+                var sw = new Stopwatch();
+                mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)}");
+                while (!_ctsWatcherThread.IsCancellationRequested)
+                {
+                    sw.Restart();
+                    var tcs = new TaskCompletionSource<int>(0);
+                    ThreadPool.QueueUserWorkItem((o) =>
+                    {
+                        tcs.SetResult(0);
+                    });
+                    await tcs.Task;
+                    sw.Stop();
+                    if (sw.Elapsed > TimeSpan.FromSeconds(0.5))
+                    {
+                        mainWindow.AddStatusMsg($"Detected ThreadPool Starvation  {sw.Elapsed.TotalSeconds:n2} secs");
+                    }
+                }
+                _tcsWatcherThread.TrySetResult(0);
+            })
+            {
+                Name = nameof(MyThreadPoolWatcher)
+            };
+            this._threadWatcher.Start();
+        }
+
+        public void Dispose()
+        {
+            _mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)} Dispose");
+            this._ctsWatcherThread.Cancel();
+            while (!_tcsWatcherThread.Task.IsCompleted)
+            {
+                Task.Delay(TimeSpan.FromSeconds(1));
+            }
+            _mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)} Disposed");
         }
     }
 }
