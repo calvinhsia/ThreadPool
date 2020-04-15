@@ -162,6 +162,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                 {
                     _btnGo.IsEnabled = false;
                     _txtStatus.Clear();
+                    ShowThreadPoolStats();
                     if (!UseJTF)
                     {
                         await DoThreadPoolAsync();
@@ -186,7 +187,6 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             var tcs = new TaskCompletionSource<int>();
             var lstTasks = new List<Task>();
 
-            ShowThreadPoolStats();
             for (int ii = 0; ii < NTasks; ii++)
             {
                 var i = ii;// local copy of iteration var
@@ -236,27 +236,6 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             }
         }
 
-        //async Task UpdateCounterFromAnyThread(JoinableTaskFactory jtf, int secsDelay)
-        //{
-        //    await jtf.SwitchToMainThreadAsync();
-        //    Thread.Sleep(TimeSpan.FromSeconds(2));
-        //    UpdateUiTxt();
-        //}
-
-        //private async Task DoJTFTestAsync(JoinableTaskFactory jtf)
-        //{
-        //    AddStatusMsg($"In {nameof(DoJTFTestAsync)}");
-        //    await TaskScheduler.Default;
-        //    jtf.Run(async () =>
-        //       {
-        //           await jtf.SwitchToMainThreadAsync();
-        //           UpdateUiTxt();
-        //           Thread.Sleep(TimeSpan.FromSeconds(1));
-
-        //       });
-
-        //}
-
         private async Task DoJTFAsync()
         {
             var tcs = new TaskCompletionSource<int>();
@@ -265,51 +244,32 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             var jtf = jtfContext.CreateFactory(jtfContext.CreateCollection());
             _txtUI.Text = "0"; // must be done on UI thread
 
-            //            await DoJTFAsync();
-
-            jtf.Run(async delegate
-            {
-                AddStatusMsg($"In Jtf.Run");
-                await TaskScheduler.Default;
-                AddStatusMsg($"In Jtf.Run after switch to bkgd");
-                await Task.Yield();
-            });
-
-            await jtf.RunAsync(async delegate
-            {
-                AddStatusMsg($"In Jtf.RunAsync");
-                await TaskScheduler.Default;
-                AddStatusMsg($"In Jtf.RunAsync after switch to bkgd");
-                await Task.Yield();
-            });
-
             var lstTasks = new List<JoinableTask>();
             for (int ii = 0; ii < NTasks; ii++)
             {
                 var i = ii;// local copy of iteration var
-                //await TaskScheduler.Default; // switch to threadpool thread
-                //var x = jtf.Run(async () =>
-                //{
-                //    return 1;
-                //});
-
 
                 lstTasks.Add(jtf.RunAsync(async () =>
                    {
                        AddStatusMsg($"In Task jtf.runasync {i}");
-                       await TaskScheduler.Default;
-
+                       await TaskScheduler.Default; // switch to bgd thread
+                       // synchronouse call
                        jtf.Run(async () =>
                        {
-                           Thread.Sleep(TimeSpan.FromSeconds(1));
-                           await Task.Yield();
+                           if (TaskDoAwait)
+                           {
+                               await Task.Delay(TimeSpan.FromSeconds(.1));
+                           }
+                           else
+                           {
+                               Thread.Sleep(TimeSpan.FromSeconds(.1));
+                           }
                        });
                        AddStatusMsg($"In Task jtf.runasync {i} bgd");
                        await jtf.SwitchToMainThreadAsync();
                        UpdateUiTxt();
                        AddStatusMsg($"In Task jtf.runasync {i} set txt");
                    }));
-
             }
             lstTasks.Add(jtf.RunAsync(async () =>
             {
@@ -365,7 +325,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             this._tcsWatcherThread = new TaskCompletionSource<int>();
             this._ctsWatcherThread = new CancellationTokenSource();
             // to detect a threadpool starvation, we need a non-threadpool thread
-            this._threadWatcher = new Thread(async () =>
+            this._threadWatcher = new Thread(() =>
             {
                 var sw = new Stopwatch();
                 mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)}");
@@ -378,7 +338,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                     {
                         tcs.SetResult(0);
                     });
-                    await tcs.Task; // wait for the workitem to be completed
+                    tcs.Task.Wait(); // wait for the workitem to be completed. Can't use async here
                     sw.Stop();
                     if (sw.Elapsed > TimeSpan.FromSeconds(0.5)) //detect if it took > thresh to execute task
                     {
@@ -388,14 +348,15 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                 _tcsWatcherThread.TrySetResult(0);
             })
             {
-                Name = nameof(MyThreadPoolWatcher)
+                Name = nameof(MyThreadPoolWatcher),
+                IsBackground = true
             };
             this._threadWatcher.Start();
         }
 
         public void Dispose()
         {
-//            _mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)} Dispose");
+            //            _mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)} Dispose");
             this._ctsWatcherThread.Cancel();
             while (!_tcsWatcherThread.Task.IsCompleted)
             {
