@@ -1,6 +1,6 @@
 ﻿//Sample to demonstrate ThreadPool Starvation, with and without using JTF
-// File->New->Project->C# WPF App. (Change "WpfApp1" namespace below to match whatever you create)
-// see https://github.com/microsoft/vs-threading/blob/master/doc/cookbook_vs.md
+// File->New->Project->C# WPF App. (Change  namespace below to match whatever you create). Replace MainWindow.xaml.cs with below code
+// see VS Threading Cookbook: https://github.com/microsoft/vs-threading/blob/master/doc/cookbook_vs.md
 // https://docs.microsoft.com/en-us/archive/blogs/vancem/diagnosing-net-core-threadpool-starvation-with-perfview-why-my-service-is-not-saturating-all-cores-or-seems-to-stall
 //  https://github.com/microsoft/vs-threading/blob/master/doc/threadpool_starvation.md
 // https://github.com/calvinhsia/ThreadPool
@@ -18,7 +18,7 @@ using System.Windows.Controls;
 using System.Windows.Markup;
 using System.Xml;
 
-namespace WpfApp1
+namespace ThreadPoolDemo
 {
     /// <summary>
     /// Interaction logic for MainWindow.xaml
@@ -28,7 +28,7 @@ namespace WpfApp1
         private TextBox _txtStatus;
         private Button _btnGo;
         private Button _btnDbgBreak;
-        private TextBox _txtUI; // not databound so must be updated from main thread
+        private TextBox _txtUI; // intentionally not databound so must be updated from main thread
         const string _toolTipBtnGo = @"
 The UI (including the status window) may not be responsive, depending on the options chosen\r\n
 After completion, the status window timestamps are accurate (the actual time the msg was logged).\r\n
@@ -74,7 +74,7 @@ The CLR may retire extra idle active threads
                     }));
             }
         }
-        private async void MainWindow_Loaded(object sender, RoutedEventArgs eLoaded)
+        private void MainWindow_Loaded(object sender, RoutedEventArgs eLoaded)
         {
             Title = "ThreadPool Starvation Demo";
 
@@ -91,10 +91,6 @@ xmlns:l=""clr-namespace:{this.GetType().Namespace};assembly={
             <RowDefinition Height=""auto""/>
             <RowDefinition Height=""*""/>
         </Grid.RowDefinitions>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width = ""auto""/>
-            <ColumnDefinition Width = ""*""/>
-        </Grid.ColumnDefinitions>
 
         <StackPanel Grid.Row=""0"" HorizontalAlignment=""Left"" Height=""30"" VerticalAlignment=""Top"" Orientation=""Horizontal"">
             <Label Content=""#Tasks""/>
@@ -107,7 +103,7 @@ xmlns:l=""clr-namespace:{this.GetType().Namespace};assembly={
                 />
             <Button x:Name=""_btnGo"" Content=""_Go"" Width=""45"" ToolTip=""{_toolTipBtnGo}""/>
         </StackPanel>
-        <StackPanel Orientation=""Horizontal"" Grid.Column=""1"" HorizontalAlignment=""Right"">
+        <StackPanel Margin=""55,0,0,10"" Orientation=""Horizontal"" HorizontalAlignment=""Right"">
             <Button x:Name=""_btnDbgBreak"" Content=""_DebugBreak"" 
                 ToolTip=""invoke debugger: examine Threads (Threads or Parallel Stacks window) to see how busy the threadpool is and examine what each thread is doing""/>
             <TextBox x:Name=""_txtUI"" Grid.Column=""1"" Text=""sample text"" Width=""200"" IsReadOnly=""True"" IsUndoEnabled=""False"" HorizontalAlignment=""Right""/>
@@ -115,7 +111,7 @@ xmlns:l=""clr-namespace:{this.GetType().Namespace};assembly={
         
         <TextBox x:Name=""_txtStatus"" Grid.Row=""1"" FontFamily=""Consolas"" FontSize=""10""
             ToolTip=""DblClick to open in Notepad"" 
-        IsReadOnly=""True"" VerticalScrollBarVisibility=""Auto"" IsUndoEnabled=""False"" VerticalAlignment=""Top""/>
+        IsReadOnly=""True"" VerticalScrollBarVisibility=""Auto"" HorizontalScrollBarVisibility=""Auto"" IsUndoEnabled=""False"" VerticalAlignment=""Top""/>
     </Grid>
 ";
             var strReader = new System.IO.StringReader(strxaml);
@@ -139,7 +135,6 @@ xmlns:l=""clr-namespace:{this.GetType().Namespace};assembly={
                 System.IO.File.WriteAllText(fname, _txtStatus.Text);
                 Process.Start(fname);
             };
-            await Task.Yield();
         }
 #if false
 if you see tasks starting 1 second apart: 
@@ -165,9 +160,10 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             {
                 using (var oWatcher = new MyThreadPoolWatcher(this))
                 {
+                    _txtUI.Text = "0"; // must be done on UI thread
                     _btnGo.IsEnabled = false;
                     _txtStatus.Clear();
-                    AddStatusMsg($"Starting {this.Title} with {nameof(UseJTF)}={UseJTF}  {nameof(CauseStarvation)}= {CauseStarvation}  {nameof(UIThreadDoAwait)}={UIThreadDoAwait}");
+                    AddStatusMsg($"{nameof(UseJTF)}={UseJTF}  {nameof(CauseStarvation)}={CauseStarvation}  {nameof(UIThreadDoAwait)}={UIThreadDoAwait}");
                     ShowThreadPoolStats();
                     await Task.Delay(TimeSpan.FromSeconds(.5));
                     if (!UseJTF)
@@ -248,7 +244,6 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             var jtfContext = new JoinableTaskContext();
 
             var jtf = jtfContext.CreateFactory(jtfContext.CreateCollection());
-            _txtUI.Text = "0"; // must be done on UI thread
 
             var lstTasks = new List<JoinableTask>();
             for (int ii = 0; ii < NTasks; ii++)
@@ -256,8 +251,11 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                 var i = ii;// local copy of iteration var
                 lstTasks.Add(jtf.RunAsync(async () =>
                    {
-                       AddStatusMsg($"In Task jtf.runasync {i}");
+                       Debug.Assert(jtf.Context.IsOnMainThread, "We are on UI thread");
                        await TaskScheduler.Default; // switch to bgd thread
+                       Debug.Assert(!jtf.Context.IsOnMainThread, "We are on TP thread");
+                       AddStatusMsg($"In Task jtf.runasync {i}");
+                       var tid = Thread.CurrentThread.ManagedThreadId;
                        if (CauseStarvation)
                        {
                            // synchronous call: the curthread is not relinquished to the threadpool
@@ -273,12 +271,12 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                            UpdateUiTxt();
                        }
 
-                       Thread.Sleep(TimeSpan.FromSeconds(.1));
-
-                       AddStatusMsg($"In Task jtf.runasync {i} bgd");
-                       await jtf.SwitchToMainThreadAsync();
-                       UpdateUiTxt();
-                       AddStatusMsg($"In Task jtf.runasync {i} set txt");
+                       Thread.Sleep(TimeSpan.FromSeconds(2.5));// simulate long time on main thread
+                       await TaskScheduler.Default; // switch to tp thread
+                       //AddStatusMsg($"In Task jtf.runasync {i} bgd");
+                       //await jtf.SwitchToMainThreadAsync();
+                       //UpdateUiTxt();
+                       AddStatusMsg($"Task jtf.runasync {i} Done on " + (tid == Thread.CurrentThread.ManagedThreadId ? "Same" : "diff") + " Thread");
                    }));
             }
             lstTasks.Add(jtf.RunAsync(async () =>
@@ -303,10 +301,8 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
 
         private void UpdateUiTxt()
         {
-            // will throw if not on UI thread
-            var val = int.Parse(_txtUI.Text);
+            var val = int.Parse(_txtUI.Text); // will throw if not on UI thread
             _txtUI.Text = (val + 1).ToString();
-            Thread.Sleep(TimeSpan.FromSeconds(1));
         }
 
 
@@ -346,12 +342,13 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                     var tcs = new TaskCompletionSource<int>(0);
                     ThreadPool.QueueUserWorkItem((o) =>
                     {
-                        tcs.SetResult(0);
+                        tcs.SetResult(0); // the very imple workitem that should execute very quickly
                     });
                     tcs.Task.Wait(); // wait for the workitem to be completed. Can't use async here
                     sw.Stop();
                     if (sw.Elapsed > TimeSpan.FromSeconds(0.25)) //detect if it took > thresh to execute task
                     {
+                        // when starvation has been detected, the CLR has waited 1 second for an available thread and created another thread
                         mainWindow.AddStatusMsg($"Detected ThreadPool Starvation !!!!!!!! {sw.Elapsed.TotalSeconds:n2} secs");
                         Thread.Sleep(TimeSpan.FromSeconds(1)); // don't try to detect starvation for another second
                     }
