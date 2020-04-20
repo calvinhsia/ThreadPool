@@ -1,4 +1,7 @@
 ﻿//Sample to demonstrate ThreadPool Starvation, with and without using JTF
+// You can use this lightweight sample to experiment with Threads, ThreadPool and using JoinableTaskFactory
+// Seeing the results of your changes quickly helps you understand how to use it.
+// Try adding exceptions into the mix.
 // File->New->Project->C# WPF App. (Change  namespace below to match whatever you create). Replace MainWindow.xaml.cs with below code
 // see VS Threading Cookbook: https://github.com/microsoft/vs-threading/blob/master/doc/cookbook_vs.md
 // https://docs.microsoft.com/en-us/archive/blogs/vancem/diagnosing-net-core-threadpool-starvation-with-perfview-why-my-service-is-not-saturating-all-cores-or-seems-to-stall
