@@ -273,6 +273,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
 
                        Thread.Sleep(TimeSpan.FromSeconds(2.5));// simulate long time on main thread
                        await TaskScheduler.Default; // switch to tp thread
+                       //await Task.Yield().ConfigureAwait(false); // this will allow the continuation to go on any thread, not the thread of the captured context.
                        //AddStatusMsg($"In Task jtf.runasync {i} bgd");
                        //await jtf.SwitchToMainThreadAsync();
                        //UpdateUiTxt();
@@ -370,6 +371,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             {
                 Task.Delay(TimeSpan.FromSeconds(0.2));
             }
+            this._ctsWatcherThread.Dispose();
             _mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)} Disposed");
         }
     }
