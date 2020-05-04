@@ -372,7 +372,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             this._ctsWatcherThread.Cancel();
             while (!_tcsWatcherThread.Task.IsCompleted)
             {
-                Task.Delay(TimeSpan.FromSeconds(0.2));
+                Task.Delay(TimeSpan.FromSeconds(0.2)).Wait();
             }
             this._ctsWatcherThread.Dispose();
             _mainWindow.AddStatusMsg($"{nameof(MyThreadPoolWatcher)} Disposed");
