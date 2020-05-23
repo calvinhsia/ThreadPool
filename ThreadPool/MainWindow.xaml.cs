@@ -315,9 +315,9 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             ThreadPool.GetMaxThreads(out var workerThreads, out var completionPortThreads);  /// 2047, 1000
             AddStatusMsg($"  Max    #workerThreads={workerThreads} #completionPortThreads={completionPortThreads}");
             ThreadPool.GetMinThreads(out var minWorkerThreads, out var minCompletionPortThreads);   // 8, 8
-            AddStatusMsg($"  Min    #workerThreads={minWorkerThreads} #completionPortThreads={minCompletionPortThreads}");
+            AddStatusMsg($"  Min    #minWorkerThreads={minWorkerThreads} #minCompletionPortThreads={minCompletionPortThreads}");
             ThreadPool.GetAvailableThreads(out var availWorkerThreads, out var availCompletionPortThreads);
-            AddStatusMsg($"  Avail  #workerThreads={availWorkerThreads} #completionPortThreads={availCompletionPortThreads}");
+            AddStatusMsg($"  Avail  #availWorkerThreads={availWorkerThreads} #availCompletionPortThreads={availCompletionPortThreads}");
         }
     }
 
