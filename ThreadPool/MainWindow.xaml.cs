@@ -39,10 +39,15 @@ The CLR will expand the threadpool if a task can't be scheduled to run because n
 The CLR may retire extra idle active threads
 ";
 
-        public int NTasks { get; set; } = 10;
+        public int NTasks { get; set; } = 50;
         public bool CauseStarvation { get; set; }
         public bool UIThreadDoAwait { get; set; } = true;
         public bool UseJTF { get; set; }
+        public bool DemoThreadLeak { get; set; } = true;
+        public bool DemoThreadLeakNot => !DemoThreadLeak;
+
+        internal CancellationTokenSource ctsCancelAll;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -55,7 +60,7 @@ The CLR may retire extra idle active threads
             {
                 // we want to read the threadid 
                 //and time immediately on current thread
-                var dt = string.Format("[{0}],TID={1,2},",
+                var dt = string.Format("[{0,13}],TID={1,3},",
                     DateTime.Now.ToString("hh:mm:ss:fff"),
                     Thread.CurrentThread.ManagedThreadId);
                 _txtStatus.Dispatcher.BeginInvoke(
@@ -96,6 +101,8 @@ xmlns:l=""clr-namespace:{this.GetType().Namespace};assembly={
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row=""0"" HorizontalAlignment=""Left"" Height=""30"" VerticalAlignment=""Top"" Orientation=""Horizontal"">
+            <CheckBox Margin=""15,0,140,10"" Content=""_DemoThreadLeak""  IsChecked=""{{Binding DemoThreadLeak}}"" 
+                ToolTip=""Create a bunch of tasks, which lead to thread growth and thus leaks""/>
             <Label Content=""#Tasks""/>
             <TextBox Text=""{{Binding NTasks}}"" Width=""40"" />
             <CheckBox Margin=""15,0,0,10"" Content=""_CauseStarvation""  IsChecked=""{{Binding CauseStarvation}}"" 
@@ -161,21 +168,38 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
         {
             try
             {
+                if (_btnGo.Content as string == "_Go")
+                {
+                    _btnGo.Content = "_Cancel";
+                    ctsCancelAll = new CancellationTokenSource();
+                }
+                else
+                {
+                    ctsCancelAll?.Cancel();
+                    AddStatusMsg("cancelling");
+                    return;
+                }
                 using (var oWatcher = new MyThreadPoolWatcher(this))
                 {
                     _txtUI.Text = "0"; // must be done on UI thread
-                    _btnGo.IsEnabled = false;
                     _txtStatus.Clear();
                     AddStatusMsg($"{nameof(UseJTF)}={UseJTF}  {nameof(CauseStarvation)}={CauseStarvation}  {nameof(UIThreadDoAwait)}={UIThreadDoAwait}");
                     ShowThreadPoolStats();
-                    await Task.Delay(TimeSpan.FromSeconds(.5));
-                    if (!UseJTF)
+                    if (DemoThreadLeak)
                     {
-                        await DoThreadPoolAsync();
+                        await DoDemoThreadLeakAsync();
                     }
                     else
                     {
-                        await DoJTFAsync();
+                        await Task.Delay(TimeSpan.FromSeconds(.5));
+                        if (!UseJTF)
+                        {
+                            await DoThreadPoolAsync();
+                        }
+                        else
+                        {
+                            await DoJTFAsync();
+                        }
                     }
                     AddStatusMsg($"Done");
                     ShowThreadPoolStats();
@@ -185,7 +209,47 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
             {
                 AddStatusMsg(ex.ToString());
             }
-            _btnGo.IsEnabled = true;
+            _btnGo.Content = "_Go";
+        }
+
+        private async Task DoDemoThreadLeakAsync()
+        {
+            // Add tasks that don't terminate to the threadpool to see the memory growth
+            // The Virtual Size grows 1M per thread. The Private bytes and Working set don't grow as much because very little of the new thread stacks are actually used
+            // A thread defaults to 1 Meg in size, and is dynamicaly committed as the usage grows
+            // You can use Task Manager, ProcExplorer to monitor thread count and memory use.
+            // Or you can use PerfMon to graph the thread count, memory use
+            // https://docs.microsoft.com/en-us/archive/blogs/calvin_hsia/use-perfmon-to-analyze-your-managed-memory
+            // When you hit Cancel the threads will be freed.
+            // If your task does something that does not finish, then it can cause a thread leak
+            // E.G. you could have a timer start a task that Gets a Service to do something
+            //   The GetService could be unavailable (perhaps it requires a busy UI thread) and the tasks just accumulate, leaking threads
+            AddStatusMsg("$Starting thead pool leak");
+            await Task.Run(async () =>
+            {
+                var lstTasks = new List<Task>();
+                var nTasksStarted = 0;
+                for (int ii = 0; ii < NTasks && !ctsCancelAll.IsCancellationRequested; ii++)
+                {
+                    // create a new task on a different threadpool thread
+                    var tsk = Task.Run(() =>
+                    {
+                        // keep this thead occupied, but not busy: the thread will not return, so the thread stack will be the same, so the thread can't be reused
+                        if (++nTasksStarted == NTasks)
+                        {
+                            AddStatusMsg("Last task started");
+                        }
+                        while (!ctsCancelAll.IsCancellationRequested)
+                        {
+                            Thread.Sleep(TimeSpan.FromSeconds(1.5));
+                        }
+                    });
+                    // each additional task will tie up a thread pool thread, causing the threadpool to grow roughly every 1 second 
+                    lstTasks.Add(tsk);
+                }
+                AddStatusMsg($"Added {lstTasks.Count} tasks");
+                await Task.WhenAll(lstTasks);
+            });
         }
 
         private async Task DoThreadPoolAsync()
@@ -199,7 +263,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                 lstTasks.Add(Task.Run(async () =>
                 {
                     var tid = Thread.CurrentThread.ManagedThreadId;
-                    AddStatusMsg($"Task {i} Start");
+                    AddStatusMsg($"Task {i,3} Start");
                     // in this method we do the work that might take a long time in bkgd thread (several seconds)
                     // keep in mind how the thread that does the work is used: 
                     // if it's calling Thread.Sleep, the CPU load will be low, but the threadpool thread will be occupied
@@ -208,15 +272,15 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                         while (!tcs.Task.IsCompleted)
                         {
                             // 1 sec is the threadpool starvation threshold. We'll sleep a different amount so we can tell its not this sleep causing the 1 sec pauses.
-                            Thread.Sleep(TimeSpan.FromSeconds(0.2)); 
+                            Thread.Sleep(TimeSpan.FromSeconds(0.2));
                         }
                     }
                     else
                     {
                         // if the tcs isn't complete, then the curthread will be relinquished back to the theadpool with a continuation queued when the task is done
-                        await tcs.Task; 
+                        await tcs.Task;
                     }
-                    AddStatusMsg($"Task {i} Done on " + (tid == Thread.CurrentThread.ManagedThreadId ? "Same" : "diff") + " Thread");
+                    AddStatusMsg($"Task {i,3} Done on " + (tid == Thread.CurrentThread.ManagedThreadId ? "Same" : "diff") + " Thread");
                 }));
             }
             var taskSetDone = Task.Run(async () =>
@@ -358,7 +422,7 @@ Microsoft-Windows-DotNETRuntime/ThreadPoolWorkerThreadAdjustment/Adjustment	8,36
                     }
                 }
                 _tcsWatcherThread.TrySetResult(0);
-            })
+            }, maxStackSize: 262144)
             {
                 Name = nameof(MyThreadPoolWatcher),
                 IsBackground = true
